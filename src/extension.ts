@@ -3,62 +3,241 @@ import * as path from 'path';
 import * as JSON5 from 'json5';
 
 export function activate(context: vscode.ExtensionContext) {
+  vscode.workspace.onDidOpenTextDocument((document) => {
+    const fileName = document.fileName;
+
+    if (fileName.endsWith('.tilemap')) {
+      showTilemapMenu(document);
+    }
+  });
+
   const disposable = vscode.commands.registerCommand('tileeditorpyghelper.openEditor', () => {
-    const panel = vscode.window.createWebviewPanel(
-      'tileEditor',
-      'Tilemap Editor',
-      vscode.ViewColumn.One,
-      { 
-        enableScripts: true,
-        retainContextWhenHidden: true
-      }
-    );
-
-    panel.webview.html = getWebviewContent();
-
-    // WebView  확장 메시지 처리
-    panel.webview.onDidReceiveMessage(async (message) => {
-      if (message.command === 'readMultipleFiles') {
-        try {
-          const workspaceFolders = vscode.workspace.workspaceFolders;
-          if (!workspaceFolders) {
-            panel.webview.postMessage({ command: 'error', text: '워크스페이스가 없습니다.' });
-            return;
-          }
-          const workspaceUri = workspaceFolders[0].uri;
-
-          const imagePaths = message.paths;
-
-          const imageResults= [];
-          for (const relPath of imagePaths) {
-            const fileUri = vscode.Uri.joinPath(workspaceUri, path.posix.normalize(relPath));
-            try {
-              const img = panel.webview.asWebviewUri(fileUri);
-              imageResults.push(img.toString());
-            } catch (err) {
-              imageResults.push(null);
-            }
-          }
-
-          panel.webview.postMessage({
-            command: 'showMultipleFiles',
-            images: imageResults,
-          });
-        } catch (err: any) {
-          panel.webview.postMessage({ command: 'error', text: '파일 파싱 실패: ' + err.message });
-        }
-      }
-    });
+    showTileEditor(null);
   });
 
   context.subscriptions.push(disposable);
 }
 
+function showTileEditor(data: { resource: string | null, tilemap: string | null } | null) {
+  const panel = vscode.window.createWebviewPanel(
+    'tileEditor',
+    'Tilemap Editor',
+    vscode.ViewColumn.One,
+    { 
+      enableScripts: true,
+      retainContextWhenHidden: true
+    }
+  );
+  panel.webview.html = getWebviewContent(data);
+  
+  // WebView  확장 메시지 처리
+  panel.webview.onDidReceiveMessage(async (message) => {
+    if (message.command === 'readMultipleFiles') {
+      try {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+          panel.webview.postMessage({ command: 'error', text: '워크스페이스가 없습니다.' });
+          return;
+        }
+
+        const workspaceUri = workspaceFolders[0].uri;
+        const imagePaths = message.paths;
+        const imageResults= [];
+        for (const relPath of imagePaths) {
+          const fileUri = vscode.Uri.joinPath(workspaceUri, path.posix.normalize(relPath));
+          try {
+            const img = panel.webview.asWebviewUri(fileUri);
+            imageResults.push(img.toString());
+          } catch (err) {
+            imageResults.push(null);
+          }
+        }
+
+        panel.webview.postMessage({
+          command: 'showMultipleFiles',
+          images: imageResults,
+        });
+      } catch (err: any) {
+        panel.webview.postMessage({ command: 'error', text: '파일 파싱 실패: ' + err.message });
+      }
+    }
+  });
+}
+
+function showTilemapMenu(document: vscode.TextDocument) {
+  const panel = vscode.window.createWebviewPanel(
+    'manage',
+    'Tilemap Manage',
+    vscode.ViewColumn.One,
+    { 
+      enableScripts: true,
+      retainContextWhenHidden: true
+    }
+  );
+
+  const parsed = JSON5.parse(document.getText());
+
+  panel.webview.html = getWebviewContentManage(parsed);
+  
+  // WebView  확장 메시지 처리
+  panel.webview.onDidReceiveMessage(async (message) => {
+    if (message.command === 'readfile') {
+      try {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+          panel.webview.postMessage({ command: 'error', text: '워크스페이스가 없습니다.' });
+          return;
+        }
+
+        const workspaceUri = workspaceFolders[0].uri;
+        const paths = message.paths;
+        const results= [];
+        for (const relPath of paths) {
+          const fileUri = vscode.Uri.joinPath(workspaceUri, path.posix.normalize(relPath));
+          try {
+            const bytes = await vscode.workspace.fs.readFile(fileUri);
+            const context = new TextDecoder().decode(bytes);
+
+            results.push(context);
+          } catch (err) {
+            results.push(null);
+          }
+        }
+
+        const [resource, tilemap] = results;
+        showTileEditor({ resource, tilemap });
+      
+        panel.webview.postMessage({
+          command: 'receivefile',
+          results
+        });
+      } catch (err: any) {
+        panel.webview.postMessage({ command: 'error', text: '파일 파싱 실패: ' + err.message });
+      }
+    }
+  });
+}
+
 // This method is called when your extension is deactivated
 export function deactivate() { }
+function getWebviewContentManage(content: { name: string, resource: string, tilemap: string }[]) {
+  const html = /* html */ `
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f0f0f0;
+      padding: 20px;
+      max-width: 500px;
+      margin: auto;
+    }
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+    .map-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 20px;
+    }
+    .map-item {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .map-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .map-name {
+      font-size: 1.15rem;
+      font-weight: bold;
+      color: #222;
+    }
+    .map-path {
+      font-size: 0.85rem;
+      color: #888;
+      word-break: break-all;
+    }
+    .start-btn {
+      background-color: #4a90e2;
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+      height: 36px;
+    }
+    .start-btn:hover {
+      background-color: #357abd;
+    }
+  </style>
+</head>
+<body>
+  <h1>타일맵 수정 에디터</h1>
+  <div class="map-list" id="mapList"></div>
+
+  <script>
+    const maps = ${JSON.stringify(content)};
+    const vscode = acquireVsCodeApi();
+    const mapList = document.getElementById('mapList');
+
+    
+
+    maps.forEach(map => {
+      const item = document.createElement('div');
+      item.className = 'map-item';
+
+      const info = document.createElement('div');
+      info.className = 'map-info';
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'map-name';
+      nameEl.textContent = map.name;
+
+      const path1El = document.createElement('div');
+      path1El.className = 'map-path';
+      path1El.textContent = map.resource;
+
+      const path2El = document.createElement('div');
+      path2El.className = 'map-path';
+      path2El.textContent = map.tilemap;
+
+      info.appendChild(nameEl);
+      info.appendChild(path1El);
+      info.appendChild(path2El);
+
+      const button = document.createElement('button');
+      button.className = 'start-btn';
+      button.textContent = '시작';
+      button.onclick = () => {
+        vscode.postMessage({ command: 'readfile', paths: [map.resource, map.tilemap] });
+      };
+
+      item.appendChild(info);
+      item.appendChild(button);
+
+      mapList.appendChild(item);
+    });
+  </script>
+</body>
+</html>
+`;
+  return html;
+}
 
 
-function getWebviewContent(): string {
+function getWebviewContent(data: { resource: string | null, tilemap: string | null } | null): string {
 	const html = /* html */ `
     <!DOCTYPE html>
     <html lang="en">
@@ -134,6 +313,7 @@ function getWebviewContent(): string {
           font-size: 12px;
           font-weight: bold;
           user-select: none;
+          image-rendering: pixelated;:
         }
         .selected {
           border: 2px solid black !important;
@@ -186,7 +366,8 @@ function getWebviewContent(): string {
             <option value="line">선분</option>
           </select>
           <button onclick="downloadJSON()">저장</button>
-
+          <input type="checkbox" id="heckbox" checked/>
+          <label for="heckbox" style="color: black;">줄자 표시</label>
           <div class="palette" id="palette">
             <button className="color-box" onclick="eraser()">지우개</button>
           </div>
@@ -212,6 +393,11 @@ function getWebviewContent(): string {
 
       const canvas = document.getElementById('canvas');
       const ctx = canvas.getContext('2d');
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.webkitImageSmoothingEnabled = false;
+      ctx.mozImageSmoothingEnabled = false;
+
       let tileSize = 48;
       let tiles = {}; // 맵 타일이야
 
@@ -225,6 +411,7 @@ function getWebviewContent(): string {
       let drawStart = null;
       let mouseX = 0, mouseY = 0;
 
+      const checkbo = document.getElementById('heckbox');
       const imgsaver = document.getElementById('imgsaver')
       const editor = document.getElementById('editor')
       editor.style.display = 'none'
@@ -248,16 +435,9 @@ function getWebviewContent(): string {
           erroror.innerText = message.text
         }
       })
-      tileFile.addEventListener('change', function (e) {
-        const file = e.target.files[0];
-        select.innerHTML = ''
-        select.disabled = true
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = function (e) {
-          const content = e.target.result;
-        
-          try {
+
+      function resourceChange(content) {
+        try {
             const parsed = JSON5.parse(content);
             tile = parsed
             tile["tile"].forEach(item => {
@@ -271,10 +451,30 @@ function getWebviewContent(): string {
           } catch (err) {
             tileError.innerText = "❌ JSON5의 문법을 위반함"
           }
+      }
+
+      tileFile.addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        select.innerHTML = ''
+        tileError.innerText = ''
+        select.disabled = true
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          const content = e.target.result;
+          resourceChange(content)
         };
-      
         reader.readAsText(file, 'utf-8');
       });
+
+      function tilemapChange(content) {
+        try {
+            const parsed = JSON5.parse(content);
+            tiles = convertToCoordinatePlane(parsed);
+          } catch (err) {
+            mapError.innerText = "❌ JSON5의 문법을 위반함"
+          }
+      }
 
       mapFile.addEventListener('change', function (e) {
         const file = e.target.files[0];
@@ -282,17 +482,11 @@ function getWebviewContent(): string {
         const reader = new FileReader();
         reader.onload = function (e) {
           const content = e.target.result;
-        
-          try {
-            const parsed = JSON5.parse(content);
-            tiles = convertToCoordinatePlane(parsed);
-          } catch (err) {
-            mapError.innerText = "❌ JSON5의 문법을 위반함"
-          }
+          tilemapChange(content)
         };
-      
         reader.readAsText(file, 'utf-8');
       });
+
       function openTileMap() {
         if (tile == null) {
           submitError.innerText = "리소스 파일을 입력해주세요"
@@ -318,6 +512,7 @@ function getWebviewContent(): string {
       });
 
       const paletteEl = document.getElementById('palette');
+      
       const inervalId = setInterval(() => {
         if (images !== null) {
           imageComponents = new Array(images.length).fill(null)
@@ -491,7 +686,7 @@ function tileToScreen(tx, ty) {
 // 4) draw: 모든 타일 + 격자 + preview
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+  
   // 타일 그리기
   for (const yStr in tiles) {
     const ty = parseInt(yStr, 10);
@@ -509,25 +704,26 @@ function draw() {
 
   // 미리보기
   drawPreview();
-
-  // 격자 그리기
-  ctx.strokeStyle = '#ccc';
-  // 수평선: y = -offsetY + k*tileSize
-  for (let y = -100; y < 100; y++) {
-    const lineY = canvas.height - offsetY - y * tileSize;
-    ctx.beginPath();
-    ctx.moveTo(0, lineY);
-    ctx.lineTo(canvas.width, lineY);
-    ctx.stroke();
-  }
-  // 수직선: x = offsetX + k*tileSize
-  for (let x = -100; x < 100; x++) {
-    const lineX = offsetX + x * tileSize;
-    ctx.beginPath();
-    ctx.moveTo(lineX, 0);
-    ctx.lineTo(lineX, canvas.height);
-    ctx.stroke();
-  }
+// 격자 그리기
+  if (checkbo.checked) {
+    ctx.strokeStyle = '#ccc';
+    // 수평선: y = -offsetY + k*tileSize
+    for (let y = -100; y < 100; y++) {
+      const lineY = canvas.height - offsetY - y * tileSize;
+      ctx.beginPath();
+      ctx.moveTo(0, lineY);
+      ctx.lineTo(canvas.width, lineY);
+      ctx.stroke();
+    }
+    // 수직선: x = offsetX + k*tileSize
+    for (let x = -100; x < 100; x++) {
+      const lineX = offsetX + x * tileSize;
+      ctx.beginPath();
+      ctx.moveTo(lineX, 0);
+      ctx.lineTo(lineX, canvas.height);
+      ctx.stroke();
+    }
+  } 
 }
 
       function downloadJSON() {
@@ -652,6 +848,16 @@ function draw() {
 
       
     </script>
+    
+    <script>
+      const data = ${JSON.stringify(data)}
+      if (data !== null) {
+        if (data.resource !== null) resourceChange(data.resource)
+        if (data.tilemap !== null) tilemapChange(data.tilemap)
+        openTileMap()
+      }
+    </script>
+    
     </body>
     </html>
   `;
