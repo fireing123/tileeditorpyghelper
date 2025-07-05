@@ -22,7 +22,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function showTileEditor(
-  data: { resource: string | null; tilemap: string | null } | null
+  data: { resource: string | null; tilemap: string | null, tilePath: string | null } | null
 ) {
   const panel = vscode.window.createWebviewPanel(
     "tileEditor",
@@ -74,6 +74,24 @@ function showTileEditor(
           text: "파일 파싱 실패: " + err.message,
         });
       }
+    } else if (message.command === "writefile") {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+          panel.webview.postMessage({
+            command: "error",
+            text: "워크스페이스가 없습니다.",
+          });
+          return;
+        }
+
+        const workspaceUri = workspaceFolders[0].uri;
+        const fileUri = vscode.Uri.joinPath(
+            workspaceUri,
+            path.posix.normalize(message.path)
+          );
+
+        const encoder = new TextEncoder();
+        vscode.workspace.fs.writeFile(fileUri, encoder.encode(message.value));
     }
   });
 }
@@ -125,12 +143,8 @@ function showTilemapMenu(document: vscode.TextDocument) {
         }
 
         const [resource, tilemap] = results;
-        showTileEditor({ resource, tilemap });
+        showTileEditor({ resource, tilemap, tilePath: paths[1] });
 
-        panel.webview.postMessage({
-          command: "receivefile",
-          results,
-        });
       } catch (err: any) {
         panel.webview.postMessage({
           command: "error",
@@ -274,7 +288,7 @@ function getWebviewContentManage(
 }
 
 function getWebviewContent(
-  data: { resource: string | null; tilemap: string | null } | null
+  data: { resource: string | null; tilemap: string | null, tilePath: string | null } | null
 ): string {
   const html = /* html */ `
 <!DOCTYPE html>
@@ -421,7 +435,7 @@ function getWebviewContent(
                 <option value="rect">사각형</option>
                 <option value="line">선분</option>
             </select>
-            <button onclick="downloadJSON()">저장</button>
+            <button onclick="saveFile()">저장</button>
             <input type="checkbox" id="heckbox" checked />
             <label for="heckbox" style="color: black;">줄자 표시</label>
             <div class="palette" id="palette">
@@ -441,6 +455,7 @@ function getWebviewContent(
     </script>
 
     <script>
+        
         const vscode = acquireVsCodeApi();
         const erroror = document.getElementById('error')
         let tile = null
@@ -673,13 +688,6 @@ function getWebviewContent(
             const py = canvas.height - offsetY - (ty + 1) * tileSize;
             return { px, py };
         }
-        /// 현재 마우스 좌표값에 해당하는 타일 좌표를 반환함
-        //function screenToTile(x, y) { 
-        //  return {
-        //    x: Math.floor((x - offsetX) / tileSize),
-        //    y: Math.floor((y - offsetY) / tileSize)
-        //  };
-        //}
 
         function setTile(x, y, value) {
             if (!tiles[y]) tiles[y] = {};
@@ -814,14 +822,31 @@ function getWebviewContent(
             "]"].join("")
         }
         
-        function downloadJSON() {
+        function saveFile() {
+
             const data = convertToQuadrants(tiles);
             const jsonStr = quadrantsStringify(data);
-            const blob = new Blob([jsonStr], { type: 'application/json5' });
+
+            if (tileData !== null) {
+                if (tileData.tilePath !== null) {
+                    saveJSON(tileData.tilePath, jsonStr)
+                    return
+                }
+            }
+            
+            downloadJSON(jsonStr)
+        }
+
+        function downloadJSON(value) {
+            const blob = new Blob([value], { type: 'application/json5' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = 'tiles.json5';
             a.click();
+        }
+
+        function saveJSON(path, value) {
+            vscode.postMessage({ command: "writefile", path: path, value })
         }
 
         function convertToQuadrants(coordinatePlane) {
@@ -938,10 +963,10 @@ function getWebviewContent(
     </script>
 
     <script>
-        const data = ${ JSON.stringify(data)}
-        if (data !== null) {
-            if (data.resource !== null) resourceChange(data.resource)
-            if (data.tilemap !== null) tilemapChange(data.tilemap)
+        const tileData = ${JSON.stringify(data)}
+        if (tileData !== null) {
+            if (tileData.resource !== null) resourceChange(tileData.resource)
+            if (tileData.tilemap !== null) tilemapChange(tileData.tilemap)
             openTileMap()
         }
     </script>
