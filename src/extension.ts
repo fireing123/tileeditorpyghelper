@@ -333,6 +333,7 @@ function getWebviewContent(
             background: #f0f0f0;
             display: block;
             cursor: crosshair;
+            image-rendering: pixelated;
         }
 
         #toolbar {
@@ -378,7 +379,7 @@ function getWebviewContent(
             font-size: 12px;
             font-weight: bold;
             user-select: none;
-            image-rendering: pixelated;
+            
         }
 
         .selected {
@@ -464,10 +465,6 @@ function getWebviewContent(
 
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
-
-        ctx.imageSmoothingEnabled = false;
-        ctx.webkitImageSmoothingEnabled = false;
-        ctx.mozImageSmoothingEnabled = false;
 
         let tileSize = 48;
         let tiles = {}; // 맵 타일이야
@@ -749,6 +746,7 @@ function getWebviewContent(
 
         // 4) draw: 모든 타일 + 격자 + preview
         function draw() {
+            canvas.getContext("2d").imageSmoothingEnabled = false;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             // 타일 그리기
