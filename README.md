@@ -53,3 +53,19 @@ json5를 읽습니다.
 형태로 작성한다음
 vscode에서 열면 파일 입력을 하지 않고
 빠르게 에디터를 열수 있습니다.
+
+# 배경 레이어
+
+.tilemap 확장자 파일에
+
+[
+    {
+        "name" (name)
+        "resource" (path)
+        "tilemap" (path)
+        "background" (path) // 배경 tilemap
+        "backgroundResource" (path) // 배경 resource (선택)
+    }
+]
+
+backgroundResource 가 입력되지 않으면 resource 파일로 대체됩니다.

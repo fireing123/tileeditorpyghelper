@@ -22,7 +22,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function showTileEditor(
-  data: { resource: string | null; tilemap: string | null, tilePath: string | null } | null
+  data: { resource: string | null; tilemap: string | null, tilePath: string | null, background?: string | null, backgroundResource?: string | null } | null
 ) {
   const panel = vscode.window.createWebviewPanel(
     "tileEditor",
@@ -37,7 +37,7 @@ function showTileEditor(
 
   // WebView  확장 메시지 처리
   panel.webview.onDidReceiveMessage(async (message) => {
-    if (message.command === "readMultipleFiles") {
+    if (message.command === "readImage") {
       try {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -65,8 +65,9 @@ function showTileEditor(
         }
 
         panel.webview.postMessage({
-          command: "showMultipleFiles",
+          command: "receiveImage",
           images: imageResults,
+          key: message.key
         });
       } catch (err: any) {
         panel.webview.postMessage({
@@ -143,7 +144,21 @@ function showTilemapMenu(document: vscode.TextDocument) {
         }
 
         const [resource, tilemap] = results;
-        showTileEditor({ resource, tilemap, tilePath: paths[1] });
+        const editorOptions: any = {
+            resource,
+            tilemap,
+            tilePath: paths[1],
+        };
+
+        if (results.length >= 3) {
+            editorOptions.background = results[2];
+        }
+        if (results.length === 4) {
+            editorOptions.backgroundResource = results[3];
+        }
+
+        showTileEditor(editorOptions);
+        
 
       } catch (err: any) {
         panel.webview.postMessage({
@@ -267,11 +282,29 @@ function getWebviewContentManage(
             info.appendChild(path1El);
             info.appendChild(path2El);
 
+            if ("background" in map) {
+                const path3El = document.createElement('div');
+                path3El.className = 'map-path';
+                path3El.textContent = map.tilemap;
+                info.appendChild(path3El);
+            }
+            
+            if ("backgroundResource" in map) {
+                const path4El = document.createElement('div');
+                path4El.className = 'map-path';
+                path4El.textContent = map.backgroundResource;
+                info.appendChild(path4El);
+            }
+            const keys = ["resource", "tilemap", "background", "backgroundResource"]
+            const result = keys
+                .filter(key => key in map)
+                .map(key => map[key]);
+
             const button = document.createElement('button');
             button.className = 'start-btn';
             button.textContent = '시작';
             button.onclick = () => {
-                vscode.postMessage({ command: 'readfile', paths: [map.resource, map.tilemap] });
+                vscode.postMessage({ command: 'readfile', paths: result });
             };
 
             item.appendChild(info);
@@ -416,7 +449,6 @@ function getWebviewContent(
             <label>Enter Tile Resource File:</label>
             <input id="tile" type="file" />
             <div class="error-message" id="tileError"></div>
-            <select id="tileIndex" disabled></select>
         </div>
         <div>
             <label>Enter Tile Map File:</label>
@@ -436,9 +468,15 @@ function getWebviewContent(
                 <option value="rect">사각형</option>
                 <option value="line">선분</option>
             </select>
-            <button onclick="saveFile()">저장</button>
+            <button id="sbtn" class="check-button" onclick="saveButton()">저장</button>
             <input type="checkbox" id="heckbox" checked />
             <label for="heckbox" style="color: black;">줄자 표시</label>
+            <label for="backcheck" style="color: black;">배경:</label>
+            <select id="backcheck" name="backcheck">
+                <option value="VISIBLE">그리기</option>
+                <option value="INVISIBLE">그리지 않기</option>
+                <option value="FOG">안개</option>
+            </select>
             <div class="palette" id="palette">
                 <button className="color-box" onclick="eraser()">지우개</button>
             </div>
@@ -456,17 +494,39 @@ function getWebviewContent(
     </script>
 
     <script>
+        const sbutton = document.getElementById('sbtn');
+
+        function saveButton() {
+            saveFile()
+            sbutton.disabled = true;
+            sbutton.innerHTML = '<span class="check-icon">✔️</span>';
+            
+            setTimeout(() => {
+                sbutton.disabled = false;
+                sbutton.innerText = "저장"
+            }, 500);
+        }
+    </script>
+
+    <script>
         
         const vscode = acquireVsCodeApi();
         const erroror = document.getElementById('error')
+        const backcheck = document.getElementById('backcheck')
         let tile = null
+        let backTile = null
+
         let images = null
         let imageComponents = null
+
+        let backImages = null
+        let backImageComponents = null
 
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
 
         let tileSize = 48;
+        let backgroundTiles = {};
         let tiles = {}; // 맵 타일이야
 
         let offsetX = window.innerWidth / 2;
@@ -494,11 +554,14 @@ function getWebviewContent(
         window.addEventListener('message', (event) => {
             const message = event.data;
 
-            if (message.command === 'showMultipleFiles') {
-
-                images = message.images
-                editor.style.display = ''
-                draw();
+            if (message.command === 'receiveImage') {
+                if (message.key === 'main') {
+                    images = message.images
+                    editor.style.display = ''
+                    draw();
+                } else if (message.key === 'back') {
+                    backImages = message.images
+                }
             } else {
                 erroror.innerText = message.text
             }
@@ -507,25 +570,15 @@ function getWebviewContent(
         function resourceChange(content) {
             try {
                 const parsed = JSON5.parse(content);
-                tile = parsed
-                tile["tile"].forEach(item => {
-                    const option = document.createElement('option');
-                    option.value = item[0];
-                    option.textContent = item[0];
-                    select.appendChild(option);
-                });
-                select.disabled = false
-
+                vscode.postMessage({ command: 'readImage', paths: parsed[2], key: 'main' }) 
+                tile = true
             } catch (err) {
-                tileError.innerText = "❌ JSON5의 문법을 위반함"
+                tileError.innerText = "❌ JSON5의 문법을 위반함" + err
             }
         }
 
         tileFile.addEventListener('change', function (e) {
             const file = e.target.files[0];
-            select.innerHTML = ''
-            tileError.innerText = ''
-            select.disabled = true
             if (!file) return;
             const reader = new FileReader();
             reader.onload = function (e) {
@@ -540,7 +593,7 @@ function getWebviewContent(
                 const parsed = JSON5.parse(content);
                 tiles = convertToCoordinatePlane(parsed);
             } catch (err) {
-                mapError.innerText = "❌ JSON5의 문법을 위반함"
+                mapError.innerText = "❌ JSON5의 문법을 위반함" + err
             }
         }
 
@@ -555,6 +608,26 @@ function getWebviewContent(
             reader.readAsText(file, 'utf-8');
         });
 
+        function backgroundAdd(content) {
+            try {
+                const parsed = JSON5.parse(content);
+                backgroundTiles = convertToCoordinatePlane(parsed);
+            } catch (err) {
+                // 아몰랑 에러 뿜뿜
+                console.error("background TILE JSON syntax error" + err)
+            }
+        }
+
+        function backgroundResource(content) {
+             try {
+                const parsed = JSON5.parse(content);
+                vscode.postMessage({ command: 'readImage', paths: parsed[2], key: 'back' })
+            } catch (err) {
+                // 아몰랑 에러 뿜뿜
+                console.error("background RES JSON syntax error")
+            }
+        }
+
         function openTileMap() {
             if (tile == null) {
                 submitError.innerText = "리소스 파일을 입력해주세요"
@@ -562,7 +635,6 @@ function getWebviewContent(
             }
             submitError.innerText = ""
             document.getElementById('opener').style.display = 'none'
-            vscode.postMessage({ command: 'readMultipleFiles', paths: tile["tile"][select.options.selectedIndex][2] })
         }
 
         function eraser() { currentTile = null }
@@ -605,6 +677,19 @@ function getWebviewContent(
             }
         }, 200)
 
+        const rinervalId = setInterval(() => {
+            if (backImages !== null) {
+                backImageComponents = new Array(backImages.length).fill(null)
+                backImages.forEach((c, i) => {
+                    const imgob = document.createElement("img")
+                    imgob.onload = () => {
+                        backImageComponents[i] = imgob
+                    }
+                    imgob.src = c
+                });
+                clearInterval(rinervalId)
+            }
+        }, 200)
 
         canvas.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -744,26 +829,41 @@ function getWebviewContent(
             }
         }
 
-        // 4) draw: 모든 타일 + 격자 + preview
-        function draw() {
-            canvas.getContext("2d").imageSmoothingEnabled = false;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+        function tileDraw(tilesData, imgComponents) {
             // 타일 그리기
-            for (const yStr in tiles) {
+            for (const yStr in tilesData) {
                 const ty = parseInt(yStr, 10);
-                for (const xStr in tiles[ty]) {
+                for (const xStr in tilesData[ty]) {
                     const tx = parseInt(xStr, 10);
-                    const val = tiles[ty][tx];
+                    const val = tilesData[ty][tx];
                     if (val !== null) {
-                        const img = imageComponents[val];
+                        const img = imgComponents[val];
                         if (!img) continue;
                         const { px, py } = tileToScreen(tx, ty);
                         ctx.drawImage(img, px, py, tileSize, tileSize);
                     }
                 }
             }
+        }
 
+        // 4) draw: 모든 타일 + 격자 + preview
+        function draw() {
+            canvas.getContext("2d").imageSmoothingEnabled = false;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // 배경 그리기
+            if (backcheck.value === "VISIBLE") {
+                tileDraw(backgroundTiles, (backImageComponents !== null) ? backImageComponents : imageComponents);
+            }
+
+            if (backcheck.value === "FOG") {
+                tileDraw(backgroundTiles, (backImageComponents !== null) ? backImageComponents : imageComponents);
+                ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // 타일 그리기
+            tileDraw(tiles, imageComponents);
+            
             // 미리보기
             drawPreview();
             // 격자 그리기
@@ -852,61 +952,59 @@ function getWebviewContent(
 
             for (const yStr in coordinatePlane) {
                 const y = parseInt(yStr);
-                for (const xStr in coordinatePlane[y]) {
+                const row = coordinatePlane[yStr];
+            
+                for (const xStr in row) {
                     const x = parseInt(xStr);
-                    const val = coordinatePlane[y][x];
-
+                    const val = row[xStr];
+                
                     let layer, qx, qy;
-
-                    if (x >= 0 && y >= 1) {
+                
+                    if (x >= 0 && y >= 0) {
+                        // 1사분면 (including y == 0)
                         layer = 0;
                         qx = x;
-                        qy = y - 1;
-                    } else if (x <= -1 && y >= 1) {
+                        qy = y;
+                    } else if (x <= -1 && y >= 0) {
+                        // 2사분면
                         layer = 1;
                         qx = -x - 1;
-                        qy = y - 1;
+                        qy = y;
                     } else if (x < 0 && y < 0) {
+                        // 3사분면
                         layer = 2;
                         qx = -x - 1;
-                        qy = -y;
+                        qy = -y - 1;
                     } else if (x >= 0 && y < 0) {
+                        // 4사분면
                         layer = 3;
                         qx = x;
-                        qy = -y;
+                        qy = -y - 1;
                     } else {
-                        continue; // y == 0 같은 케이스 무시
+                        continue; // 이 조건은 실제로 불필요하지만 안전장치로 둠
                     }
-
+                
                     // ensure rows exist
                     while (quadrants[layer].length <= qy) {
-                        quadrants[layer].push([null]); // ❗ 항상 배열로 초기화
+                        quadrants[layer].push([]);
                     }
-                    if (!Array.isArray(quadrants[layer][qy])) {
-                        quadrants[layer][qy] = [null];
-                    }
-
+                
                     // ensure cols exist
                     while (quadrants[layer][qy].length <= qx) {
                         quadrants[layer][qy].push(null);
                     }
-
+                
                     quadrants[layer][qy][qx] = val;
                 }
             }
-
-
+        
+            // ensure at least one row per quadrant
             for (let i = 0; i < 4; i++) {
                 if (quadrants[i].length === 0) {
                     quadrants[i].push([null]);
                 }
-                for (let j = 0; j < quadrants[i].length; j++) {
-                    if (!Array.isArray(quadrants[i][j])) {
-                        quadrants[i][j] = [null];
-                    }
-                }
             }
-
+        
             return quadrants;
         }
 
@@ -914,50 +1012,49 @@ function getWebviewContent(
 
         function convertToCoordinatePlane(quadrants) {
             const coordinatePlane = {};
-
+        
             for (let layer = 0; layer < 4; layer++) {
                 const quadrant = quadrants[layer];
                 if (!quadrant) continue;
-
+            
                 for (let y = 0; y < quadrant.length; y++) {
                     const row = quadrant[y];
                     if (!row) continue;
-
+                
                     for (let x = 0; x < row.length; x++) {
                         const val = row[x];
                         if (val == null) continue;
-
+                    
                         let coordX, coordY;
-
+                    
                         switch (layer) {
-                            case 0:
+                            case 0: // 1사분면
                                 coordX = x;
-                                coordY = y + 1;
+                                coordY = y;
                                 break;
-                            case 1:
+                            case 1: // 2사분면
                                 coordX = -x - 1;
-                                coordY = y + 1;
+                                coordY = y;
                                 break;
-                            case 2:
+                            case 2: // 3사분면
                                 coordX = -x - 1;
-                                coordY = -y;
+                                coordY = -y - 1;
                                 break;
-                            case 3:
+                            case 3: // 4사분면
                                 coordX = x;
-                                coordY = -y;
+                                coordY = -y - 1;
                                 break;
                         }
-
+                    
                         if (!coordinatePlane[coordY]) coordinatePlane[coordY] = {};
                         coordinatePlane[coordY][coordX] = val;
                     }
                 }
             }
-
+        
             return coordinatePlane;
         }
-
-
+        
     </script>
 
     <script>
@@ -965,6 +1062,8 @@ function getWebviewContent(
         if (tileData !== null) {
             if (tileData.resource !== null) resourceChange(tileData.resource)
             if (tileData.tilemap !== null) tilemapChange(tileData.tilemap)
+            if ("background" in tileData) backgroundAdd(tileData.background)
+            if ("backgroundResource" in tileData) backgroundResource(tileData.backgroundResource)
             openTileMap()
         }
     </script>
